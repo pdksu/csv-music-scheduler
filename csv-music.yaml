@@ -12,7 +12,7 @@ user: pi
 runtime:
     hour: 12
     minute: 8
-merge: smerge.txt
+merge: smerge.sql
 directory: sched2022
 music: /home/pi/Music
 objects:

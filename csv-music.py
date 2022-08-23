@@ -14,13 +14,16 @@ pi should have: vlc installed, music downloaded, python3.6+,
 also, main directory should have a virtual environment called venv
 """
 
-import argparse, csv, sqlite3, yaml
+import argparse
+import csv
+import sqlite3
+import yaml
 from crontab import CronTab
 from datetime import datetime as dt
 from datetime import timedelta
+from pathlib import Path
 from time import strptime
 from typing import OrderedDict
-from pathlib import Path
 
 YAML = "csv-music.yaml"
 
@@ -36,45 +39,38 @@ def csv_to_sql(fname: Path, cur: sqlite3.Cursor, table: str):
     --------
         n : number of rows read
     """
-    #   local helper functions
-    def ctime(text: str):
-        """throw error if text is not a time"""
-        return strptime(text, "%H:%M")
 
-    def cdate(text: str):
-        """throw error if text is not a date"""
-        return strptime(text, "%m:%D:%Y")
-
-    def def_ok(x):
-        return True
-
-    SQLtypes = OrderedDict(
-        {"INTEGER": int, "REAL": float, "DATE": cdate, "TIME": ctime, "TEXT": def_ok}
+    #  type name in sql with a test that will throw an error if not that type
+    sql_types = OrderedDict(
+        {
+            "INTEGER": int,
+            "REAL": float,
+            "DATE": lambda t: strptime(t, "%m:%D:%Y"),
+            "TIME": lambda t: strptime(t, "%H:%M)"),
+            "TEXT": lambda t: True,
+        }
     )
 
     cur.execute(
         f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table};'"
     )
     texists = cur.fetchone()
-    n = 0
     with open(fname, "r") as f:
         r = csv.DictReader(f)
         for row in r:
             if not texists:
-                create_command = f"CREATE TABLE {table} ("
-                dtypes = {}
-                for k in r.fieldnames:
-                    for Dt, f in SQLtypes.items():
+                create_cmd = f"CREATE TABLE {table} ("
+                for k in r.fieldnames:  # find type by testing
+                    for Dt, f in sql_types.items():
                         try:
-                            vout = f(row[k])
+                            _unused = f(row[k])
                             break
                         except ValueError:
                             pass
-                    dtypes[k] = Dt
-                    create_command += f"{k}  {Dt}, "
-                create_command = create_command[0:-2] + ");"
-                cur.execute(create_command)
-                db_result = cur.fetchall()
+                    create_cmd = f"{create_cmd} {k}  {Dt}, "
+                create_cmd = f"{create_cmd[0:-2]} );"
+                cur.execute(create_cmd)
+                _unused = cur.fetchall()  # clear sql return stack
                 texists = True
             break
 
@@ -125,16 +121,16 @@ class SchedDB:
             for (i, result) in enumerate(results):
                 print(f"{qv[2]} {i+1}: {result[0]}")
 
-    def getDefaultScript(self):
+    def get_default_script(self):
         with open(Path(Path(__file__).parent.resolve(), self.script), "r") as f:
             queryText = "".join(f.readlines())
         return queryText
 
-    def dayBells(self, date, room):
+    def day_bells(self, date, room):
         """
-        daybells: interrogate database for the musical signals on a date
+        day_bells: interrogate database for the musical signals on a date
         """
-        queryText = self.getDefaultScript()
+        queryText = self.get_default_script()
         queryText = queryText.replace("REPDATE", date).replace("ROOMNO", room)
         self.cursor.execute(queryText)
         rows = self.cursor.fetchall()
@@ -157,19 +153,19 @@ class SchedDB:
         ]
         return rows
 
-    def bellTime(self, bell):
+    def bell_time(self, bell):
         """calculate bell timing from signal data"""
-        bellTime = bell["classDismissTime"] if bell["end"] else bell["classTime"]
-        bellOffset = timedelta(minutes=(-1 if bell["end"] else 1) * bell["offset"])
-        print(f"BELL DEBUG {bell['date']}, {bellTime}, {bellOffset} ===")
+        time_of_bell = bell["classDismissTime"] if bell["end"] else bell["classTime"]
+        bell_offset = timedelta(minutes=(-1 if bell["end"] else 1) * bell["offset"])
+        print(f"BELL DEBUG {bell['date']}, {time_of_bell}, {bell_offset} ===")
         try:
-            bellDate = (
-                dt.strptime(bell["date"] + " " + bellTime, "%m/%d/%Y %H:%M")
-                + bellOffset
+            bell_date = (
+                dt.strptime(bell["date"] + " " + time_of_bell, "%m/%d/%Y %H:%M")
+                + bell_offset
             )
         except TypeError:
             return None
-        return bellDate
+        return bell_date
 
 
 class CronScheduler:
@@ -184,7 +180,7 @@ class CronScheduler:
         self.AMRUNTIME = (y["runtime"]["hour"], y["runtime"]["minute"])
         self.CRONUSER = y["user"]
 
-    def scheduleBell(self, bell, testonly=False):
+    def schedule_bell(self, bell, testonly=False):
         """add a line to the cron file"""
         command = f"cvlc --play-and-exit {bell['file']}"
         if not bell["datetime"]:
@@ -197,7 +193,7 @@ class CronScheduler:
             if not testonly:
                 cron.write()
 
-    def emptyCron(self):
+    def empty_cron(self):
         """clear out yesterday's cron events, keep the cron file short-ish"""
         with CronTab(user=self.CRONUSER) as cron:
             vlcJobs = cron.find_command("vlc")
@@ -205,15 +201,15 @@ class CronScheduler:
                 cron.remove(job)
             cron.write()
 
-    def playDate(self, date: str, dB: SchedDB, testonly=False):
+    def play_date(self, date: str, dB: SchedDB, testonly=False):
         """generate all the bells for a day"""
-        self.emptyCron()
-        for bell in dB.dayBells(date):
-            bell["datetime"] = dB.bellTime(bell)
+        self.empty_cron()
+        for bell in dB.day_bells(date):
+            bell["datetime"] = dB.bell_time(bell)
             if bell["datetime"]:
-                self.scheduleBell(bell, testonly=testonly)
+                self.schedule_bell(bell, testonly=testonly)
 
-    def showCron(self):
+    def show_cron(self):
         """it's easier to use the command line crontab -l"""
         with CronTab(user=self.CRONUSER) as cron:
             for job in cron:
@@ -224,6 +220,7 @@ class CronScheduler:
         with CronTab(user=self.CRONUSER) as cron:
             root_path = Path(__file__).parent.resolve()
             PYTHON = Path(root_path, "venv/bin/python")
+            #  for reference, invoking python from its venv/bin/python runs python _in_ its virtual environment
             command = f"{PYTHON} {Path(root_path, Path(__file__))} -r {room}"
             job = cron.new(command=command)
             job.setall(f"{self.AMRUNTIME[1]} {self.AMRUNTIME[0]} * * *")
@@ -284,34 +281,33 @@ def run(args=getargs(), testonly=False):
     )  # generate dB from .csv files
     scheduler = CronScheduler(args.yamlfile)  # cron interface
 
-    if args.initialize:
+    if args.initialize:  # insert command to run csv-music into cron
         scheduler.initialize(room=args.initialize)
         return
-    print(f"ARGS: {args}")
-    if args.list:
+    if args.list:  # display available teachers, bell schedules, and rooms
         sched_builder.list()
         return
-    if args.overide:
+    if args.overide:  # use a date other than today
         today = args.overide
     else:
         today = dt.strftime(dt.today(), "%-m/%-d/%Y")
     if not args.room:
         raise argparse.ArgumentError(message="room number required to build schedule")
-    bells = sched_builder.dayBells(today, room=args.room)
+    bells = sched_builder.day_bells(today, room=args.room)
     if args.bellschedule:
 
-        def newsignal(sd: dict, sig: str):
+        def newsignal(sd: dict, sig: str):  # replace a signal
             sd["signal"] = sig
             return sd
 
         bells = [newsignal(bell, args.bellschedule) for bell in bells]
     if bells:
-        scheduler.emptyCron()
+        scheduler.empty_cron()
         for bell in bells:
-            bell["datetime"] = sched_builder.bellTime(bell)
-            scheduler.scheduleBell(bell, testonly=args.test)
+            bell["datetime"] = sched_builder.bell_time(bell)
+            scheduler.schedule_bell(bell, testonly=args.test)
     if args.cronList:
-        scheduler.showCron()
+        scheduler.show_cron()
 
 
 if __name__ == "__main__":
