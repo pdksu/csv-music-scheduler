@@ -182,7 +182,7 @@ class CronScheduler:
 
     def schedule_bell(self, bell, testonly=False):
         """add a line to the cron file"""
-        command = f"cvlc --play-and-exit {bell['file']}"
+        command = f"cvlc --play-and-exit '{bell['file']}'"
         if not bell["datetime"]:
             return
         print(f"BELL SCHEDULE: {bell['datetime']} {command}")
